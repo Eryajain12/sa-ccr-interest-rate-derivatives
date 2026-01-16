@@ -12,7 +12,7 @@ All calculations and results are derived directly from the file
 
 ## File Structure
 - **`SA_CCR_Erya Jain.xlsx`**  
-  Excel-based SA-CCR implementation containing trade-level calculations, hedging set aggregation, and netting-set PFE results.
+  Excel-based SA-CCR implementation containing trade-level calculations, hedging-set aggregation, and netting-set PFE results.
 
 ---
 
@@ -29,7 +29,7 @@ All calculations and results are derived directly from the file
   - Caps/Floors  
   - Basis Swaps  
 
-Although the portfolio contains 18 primary trade rows, several instruments (options and basis products) decompose into multiple **SA-CCR risk positions across hedging subsets**, resulting in **28+ trade-level risk positions** evaluated under the framework.
+Although the portfolio contains 18 primary trade rows, several option and basis instruments decompose into multiple **SA-CCR risk positions across hedging subsets**, resulting in **28+ trade-level risk positions** evaluated under the framework.
 
 ---
 
@@ -43,47 +43,126 @@ Although the portfolio contains 18 primary trade rows, several instruments (opti
 - **Hedging Sets:** 9 currency-level and basis hedging sets  
   (USD, JPY, AUD, and basis-specific hedging sets)
 
-This structure allows direct comparison of **margined vs. unmargined exposure profiles** under SA-CCR.
+This structure enables direct comparison of **margined versus unmargined exposure profiles** under SA-CCR.
 
 ---
 
-## Methodology (Implemented in Excel)
+## SA-CCR Methodology and Formulas (Implemented in Excel)
 
-### 1. Adjusted Notional
-For each trade:
+### 1. Time Definitions
+Mi = Year fraction from As-of Date to Maturity Date
+Si = Year fraction from As-of Date to Start Date
+Ei = Year fraction from As-of Date to End Date
+Ti = Year fraction from As-of Date to Exercise Date
 
-Adjusted Notional = Base Notional × Supervisory Duration
 
-Supervisory Duration:
-SD = max(e^(−0.05 × S) − e^(−0.05 × E), 0.05)
+---
+
+### 2. Supervisory Duration (Interest Rate)
+SD = max( e^(−0.05 × S) − e^(−0.05 × E), 0.05 )
 
 where:
-- **S** = Start date  
-- **E** = End date  
+- S = Start date (in years)
+- E = End date (in years)
 
 ---
 
-### 2. Trade-Level Effective Notional
-Each trade’s exposure is adjusted using:
-- Supervisory Delta (including option delta treatment)
-- Maturity Factor
-- Buy/Sell direction
+### 3. Adjusted Notional
+Adjusted Notional (dᵢ) = Base Notional × SD
 
-This produces **trade-level effective notionals**, which are aggregated by **hedging subset**.
 
 ---
 
-### 3. Hedging Set Aggregation
-Trade-level effective notionals are aggregated within each hedging set and scaled by **Basel III supervisory factors** to obtain **hedging-set effective notionals**.
+### 4. Maturity Factor (MF)
+
+**Margined trades**
+MF = √( MPOR / 250 )
+
+**Unmargined trades**
+MF = √( min(Mi, 1) )
+
+where:
+- MPOR = Margin Period of Risk (business days)
 
 ---
 
-### 4. Potential Future Exposure (PFE)
-PFE is computed at the **netting set level**:
-PFE = Multiplier × AddOn_Aggregate
+### 5. Supervisory Option Volatility
+σ = 0.5
 
+---
 
-The SA-CCR multiplier is applied using net market value and collateral inputs where applicable.
+### 6. Option Delta (Swaptions, Caps/Floors)
+d = [ ln(Pi / Ki) + 0.5 × σ² × Ti ] / ( σ × √Ti )
+δ = N(d)
+where:
+- Pi = Underlying price  
+- Ki = Strike price  
+- Ti = Time to exercise  
+- N(·) = Standard normal CDF  
+
+**Put/Call adjustment**
+- Call: +δ  
+- Put: −δ  
+
+---
+
+### 7. Supervisory Delta
+Δᵢ = Buy/Sell Indicator × Option Delta
+where:
+- Buy = +1  
+- Sell = −1  
+
+---
+
+### 8. Trade-Level Effective Notional
+ENᵢ = Adjusted Notional × MF × Δᵢ
+
+---
+
+### 9. Hedging Set Aggregation
+EN_HS = | Σ ENᵢ |
+Aggregation is performed by:
+- Counterparty ID  
+- Netting Set ID  
+- Hedging Set  
+- Hedging Subset (1 / 2 / 3)
+
+---
+
+### 10. PFE Add-On
+AddOn = Σ ( Supervisory Factor × EN_HS )
+Supervisory factors:
+- 0.005 for standard IR hedging sets  
+- 0.0025 for basis hedging sets  
+
+---
+
+### 11. Multiplier
+Multiplier = min( 1, 0.05 + 0.95 × exp( −(V − C) / (1.9 × AddOn) ) )
+where:
+- V = Netting-set market value  
+- C = Netting-set collateral value  
+
+---
+
+### 12. Potential Future Exposure (PFE)
+PFE = Multiplier × AddOn
+
+---
+
+### 13. Replacement Cost (RC)
+RC = max( 0, V − C + MTA + TH − NICA )
+where:
+- MTA = Minimum Transfer Amount  
+- TH = Threshold Amount  
+- NICA = Net Independent Collateral Amount  
+
+---
+
+### 14. Exposure at Default (EAD)
+EAD = α × ( RC + PFE )
+where:
+- α = 1.4 (Basel III regulatory multiplier)
 
 ---
 
@@ -91,7 +170,7 @@ The SA-CCR multiplier is applied using net market value and collateral inputs wh
 
 ### Netting-Set PFE Add-Ons
 | Counterparty | Netting Set | PFE Add-On |
-|--------------|------------|------------|
+|--------------|-------------|------------|
 | ABC123 | 1101 | $178,537,780 |
 | DEF123 | 1103 | $459,417,045 |
 | XYZ789 | 1102 | $33,152,737 |
@@ -102,19 +181,14 @@ The SA-CCR multiplier is applied using net market value and collateral inputs wh
 
 ## Risk Insights
 
-- The **unmargined JPY netting set (DEF123 – 1103)** contributes the largest share of PFE, illustrating the capital impact of missing collateral agreements.
-- **Margined netting sets** (ABC123 and XYZ789) exhibit materially lower exposure due to collateral and netting benefits.
-- Netting across hedging subsets significantly reduces aggregate exposure compared to gross trade-level notionals.
+- The **unmargined JPY netting set (DEF123 – 1103)** contributes the largest share of PFE, highlighting the capital impact of missing collateral agreements.
+- **Margined netting sets** exhibit materially lower exposure due to collateralization and netting benefits.
+- Netting across hedging subsets significantly reduces aggregate exposure relative to gross trade-level notionals.
 
 ---
 
 ## Conclusion
-This project demonstrates a **practical SA-CCR implementation consistent with Basel III regulatory standards**, using Excel in a format commonly employed within bank risk and regulatory teams.
-
-The framework:
-- Quantifies counterparty credit exposure for a large IR derivatives portfolio
-- Highlights the importance of **margining and netting** in reducing regulatory capital
-- Provides transparent, auditable calculations suitable for **CCR, XVA, and regulatory capital analysis**
+This project demonstrates a **practical SA-CCR implementation aligned with Basel III regulatory standards**, using Excel in a format commonly employed within bank risk and regulatory teams.
 
 All figures and conclusions are **fully supported by calculations in `SA_CCR_Erya Jain.xlsx`**.
 
@@ -131,3 +205,4 @@ All figures and conclusions are **fully supported by calculations in `SA_CCR_Ery
 ## References
 - Basel III: Standardized Approach for Counterparty Credit Risk (SA-CCR)
 - Basel III Endgame Proposal
+
